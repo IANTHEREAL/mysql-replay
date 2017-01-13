@@ -154,6 +154,7 @@ func worker_for_some_ip(key string, ch chan []byte) {
 }
 
 func main() {
+	flag.Parse()
 	var handle *pcap.Handle
 	var err error
 
