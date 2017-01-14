@@ -1,7 +1,6 @@
 package main
 
 import (
-	//	"bufio"
 	"encoding/binary"
 	"flag"
 	"fmt"
@@ -13,9 +12,6 @@ import (
 	"github.com/google/gopacket/pcap"
 	"github.com/ngaut/log"
 	"time"
-	//	"github.com/google/gopacket/pcapgo"
-	//	"github.com/google/gopacket/tcpassembly"
-	//	"github.com/google/gopacket/tcpassembly/tcpreader"
 )
 
 var (
@@ -23,9 +19,8 @@ var (
 	password       string
 	host           string
 	sourcePcapFile string
-	//sourcePcapFile string = "/data/xindong/tcpdumps/l"
-	workers   map[string]chan []byte
-	reorg_map map[string][]byte
+	workers        map[string]chan []byte
+	reorg_map      map[string][]byte
 )
 
 func init() {
@@ -35,41 +30,6 @@ func init() {
 	flag.StringVar(&sourcePcapFile, "pcap-file", "", "path of source pcap file")
 }
 
-const (
-	COM_SLEEP byte = iota
-	COM_QUIT
-	COM_INIT_DB
-	COM_QUERY
-	COM_FIELD_LIST
-	COM_CREATE_DB
-	COM_DROP_DB
-	COM_REFRESH
-	COM_SHUTDOWN
-	COM_STATISTICS
-	COM_PROCESS_INFO
-	COM_CONNECT
-	COM_PROCESS_KILL
-	COM_DEBUG
-	COM_PING
-	COM_TIME
-	COM_DELAYED_INSERT
-	COM_CHANGE_USER
-	COM_BINLOG_DUMP
-	COM_TABLE_DUMP
-	COM_CONNECT_OUT
-	COM_REGISTER_SLAVE
-	COM_STMT_PREPARE
-	COM_STMT_EXECUTE        // 23
-	COM_STMT_SEND_LONG_DATA // 24
-	COM_STMT_CLOSE
-	COM_STMT_RESET
-	COM_SET_OPTION
-	COM_STMT_FETCH
-	COM_DAEMON
-	COM_BINLOG_DUMP_GTID
-	COM_RESET_CONNECTION
-)
-
 func worker_for_some_ip(key string, ch chan []byte) {
 	var seq_id byte = 0
 	var stmt_id uint32 = 0
@@ -78,29 +38,17 @@ func worker_for_some_ip(key string, ch chan []byte) {
 	mysqlConn, err := mysql.Open("tcp", username, password, host)
 	mysqlConn.Query("use ro_global_r1;", nil)
 	if err != nil {
-		panic(err)
+		log.Errorf("switch database err %v", err)
 	}
 
 	log.Infof("a new connection")
 	for {
-		// conn.SetReadDeadline(time.Now().Add(time.Second))
-		/*		buf := make([]byte, 65535)
-				n, err := conn.Read(buf)
-				if err == io.EOF {
-					log.Warnf("EOF while reading")
-				} else if err != nil {
-					log.Warnf("read pack error %v", err)
-				} else {
-					buf = buf[:n]
-					log.Warnf("reply packet %v", buf)
-				}*/
-
 		select {
 		case packet = <-ch:
 			packet = mysql_packet_set_seq_id(packet, seq_id)
 
-			if mysql_packet_get_cmd(packet) == COM_STMT_EXECUTE ||
-				mysql_packet_get_cmd(packet) == COM_STMT_CLOSE {
+			if mysql_packet_get_cmd(packet) == mysql.COM_STMT_EXECUTE ||
+				mysql_packet_get_cmd(packet) == mysql.COM_STMT_CLOSE {
 				seq_id = 0
 				if stmt_id == 0 {
 					log.Errorf("stmt_id is not initialized! stmt_id=%d, skip!", stmt_id)
@@ -119,7 +67,7 @@ func worker_for_some_ip(key string, ch chan []byte) {
 				n, err = mysqlConn.NetConn.Write(packet)
 			}
 			log.Infof("send %v: %v", key, n)
-			if mysql_packet_get_cmd(packet) == COM_STMT_CLOSE {
+			if mysql_packet_get_cmd(packet) == mysql.COM_STMT_CLOSE {
 				stmt_id = 0
 			}
 		}
@@ -132,13 +80,12 @@ func worker_for_some_ip(key string, ch chan []byte) {
 		n, err := mysqlConn.NetConn.Read(buf)
 		if err == io.EOF {
 			log.Warnf("packet => #v", packet)
-			log.Errorf("EOF while reading")
-			panic("fuck")
+			log.Error("EOF while reading")
 		} else if err != nil {
 			log.Warnf("read pack error %v", err)
 		} else {
 			buf = buf[:n]
-			if mysql_packet_get_cmd(packet) == COM_STMT_PREPARE {
+			if mysql_packet_get_cmd(packet) == mysql.COM_STMT_PREPARE {
 				// conn.SetReadDeadline(time.Now().Add(1 * time.Second))
 				if int(buf[4]) == 0 {
 					stmt_id = binary.LittleEndian.Uint32(buf[5:9])
@@ -187,7 +134,7 @@ func mysql_packet_set_seq_id(raw_packet []byte, new_id byte) []byte {
 }
 
 func mysql_packet_set_stmt_id(raw_packet []byte, stmt_id uint32) []byte {
-	if mysql_packet_get_cmd(raw_packet) == COM_STMT_EXECUTE || mysql_packet_get_cmd(raw_packet) == COM_STMT_CLOSE {
+	if mysql_packet_get_cmd(raw_packet) == mysql.COM_STMT_EXECUTE || mysql_packet_get_cmd(raw_packet) == mysql.COM_STMT_CLOSE {
 		binary.LittleEndian.PutUint32(raw_packet[5:9], stmt_id)
 		return raw_packet
 	}
@@ -213,8 +160,6 @@ func handlePacket(packet gopacket.Packet) {
 	}
 	tcp, _ := tcpLayer.(*layers.TCP)
 
-	// log.Infof("key => %v", key)
-	// log.Infof("%v\n", tcp.Payload)
 	if len(tcp.Payload) == 0 || tcp.DstPort != 4000 {
 		return
 	}
@@ -245,7 +190,7 @@ func handlePacket(packet gopacket.Packet) {
 	}
 
 	switch cmd {
-	case COM_SLEEP, COM_QUIT, COM_PING, COM_FIELD_LIST, 133, 141:
+	case mysql.COM_SLEEP, mysql.COM_QUIT, mysql.COM_PING, mysql.COM_FIELD_LIST, 133, 141:
 
 	default:
 		if ch, ok := workers[key]; ok {
@@ -257,8 +202,4 @@ func handlePacket(packet gopacket.Packet) {
 			new_ch <- data
 		}
 	}
-}
-
-func handleMysqlPacket(packet []byte) {
-
 }

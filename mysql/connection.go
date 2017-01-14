@@ -26,7 +26,7 @@ type MysqlConn struct {
 func (mc *MysqlConn) Close() (err error) {
 	// Makes Close idempotent
 	if mc.NetConn != nil {
-		err = mc.writeCommandPacket(comQuit)
+		err = mc.writeCommandPacket(COM_QUIT)
 	}
 
 	mc.cleanup()
@@ -49,7 +49,7 @@ func (mc *MysqlConn) cleanup() {
 // Internal function to execute commands
 func (mc *MysqlConn) exec(query string) error {
 	// Send command
-	err := mc.writeCommandPacketStr(comQuery, query)
+	err := mc.writeCommandPacketStr(COM_QUERY, query)
 	if err != nil {
 		return err
 	}
@@ -73,7 +73,7 @@ func (mc *MysqlConn) Query(query string, args []driver.Value) (driver.Rows, erro
 		return nil, driver.ErrBadConn
 	}
 	// Send command
-	err := mc.writeCommandPacketStr(comQuery, query)
+	err := mc.writeCommandPacketStr(COM_QUERY, query)
 	if err == nil {
 		// Read Result
 		var resLen int

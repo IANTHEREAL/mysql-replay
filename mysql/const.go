@@ -1,11 +1,3 @@
-// Go MySQL Driver - A MySQL-Driver for Go's database/sql package
-//
-// Copyright 2012 The Go-MySQL-Driver Authors. All rights reserved.
-//
-// This Source Code Form is subject to the terms of the Mozilla Public
-// License, v. 2.0. If a copy of the MPL was not distributed with this file,
-// You can obtain one at http://mozilla.org/MPL/2.0/.
-
 package mysql
 
 const (
@@ -56,34 +48,38 @@ const (
 )
 
 const (
-	comQuit byte = iota + 1
-	comInitDB
-	comQuery
-	comFieldList
-	comCreateDB
-	comDropDB
-	comRefresh
-	comShutdown
-	comStatistics
-	comProcessInfo
-	comConnect
-	comProcessKill
-	comDebug
-	comPing
-	comTime
-	comDelayedInsert
-	comChangeUser
-	comBinlogDump
-	comTableDump
-	comConnectOut
-	comRegisterSlave
-	comStmtPrepare
-	comStmtExecute
-	comStmtSendLongData
-	comStmtClose
-	comStmtReset
-	comSetOption
-	comStmtFetch
+	COM_SLEEP byte = iota
+	COM_QUIT
+	COM_INIT_DB
+	COM_QUERY
+	COM_FIELD_LIST
+	COM_CREATE_DB
+	COM_DROP_DB
+	COM_REFRESH
+	COM_SHUTDOWN
+	COM_STATISTICS
+	COM_PROCESS_INFO
+	COM_CONNECT
+	COM_PROCESS_KILL
+	COM_DEBUG
+	COM_PING
+	COM_TIME
+	COM_DELAYED_INSERT
+	COM_CHANGE_USER
+	COM_BINLOG_DUMP
+	COM_TABLE_DUMP
+	COM_CONNECT_OUT
+	COM_REGISTER_SLAVE
+	COM_STMT_PREPARE
+	COM_STMT_EXECUTE        // 23
+	COM_STMT_SEND_LONG_DATA // 24
+	COM_STMT_CLOSE
+	COM_STMT_RESET
+	COM_SET_OPTION
+	COM_STMT_FETCH
+	COM_DAEMON
+	COM_BINLOG_DUMP_GTID
+	COM_RESET_CONNECTION
 )
 
 // https://dev.mysql.com/doc/internals/en/com-query-response.html#packet-Protocol::ColumnType

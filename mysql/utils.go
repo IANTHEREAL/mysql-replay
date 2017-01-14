@@ -1,11 +1,3 @@
-// Go MySQL Driver - A MySQL-Driver for Go's database/sql package
-//
-// Copyright 2012 The Go-MySQL-Driver Authors. All rights reserved.
-//
-// This Source Code Form is subject to the terms of the Mozilla Public
-// License, v. 2.0. If a copy of the MPL was not distributed with this file,
-// You can obtain one at http://mozilla.org/MPL/2.0/.
-
 package mysql
 
 import (
@@ -15,70 +7,12 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"strings"
 	"time"
 )
 
 var (
 	tlsConfigRegister map[string]*tls.Config // Register for custom tls.Configs
 )
-
-// RegisterTLSConfig registers a custom tls.Config to be used with sql.Open.
-// Use the key as a value in the DSN where tls=value.
-//
-//  rootCertPool := x509.NewCertPool()
-//  pem, err := ioutil.ReadFile("/path/ca-cert.pem")
-//  if err != nil {
-//      log.Fatal(err)
-//  }
-//  if ok := rootCertPool.AppendCertsFromPEM(pem); !ok {
-//      log.Fatal("Failed to append PEM.")
-//  }
-//  clientCert := make([]tls.Certificate, 0, 1)
-//  certs, err := tls.LoadX509KeyPair("/path/client-cert.pem", "/path/client-key.pem")
-//  if err != nil {
-//      log.Fatal(err)
-//  }
-//  clientCert = append(clientCert, certs)
-//  mysql.RegisterTLSConfig("custom", &tls.Config{
-//      RootCAs: rootCertPool,
-//      Certificates: clientCert,
-//  })
-//  db, err := sql.Open("mysql", "user@tcp(localhost:3306)/test?tls=custom")
-//
-func RegisterTLSConfig(key string, config *tls.Config) error {
-	if _, isBool := readBool(key); isBool || strings.ToLower(key) == "skip-verify" {
-		return fmt.Errorf("key '%s' is reserved", key)
-	}
-
-	if tlsConfigRegister == nil {
-		tlsConfigRegister = make(map[string]*tls.Config)
-	}
-
-	tlsConfigRegister[key] = config
-	return nil
-}
-
-// DeregisterTLSConfig removes the tls.Config associated with key.
-func DeregisterTLSConfig(key string) {
-	if tlsConfigRegister != nil {
-		delete(tlsConfigRegister, key)
-	}
-}
-
-// Returns the bool value of the input.
-// The 2nd return value indicates if the input was a valid bool value
-func readBool(input string) (value bool, valid bool) {
-	switch input {
-	case "1", "true", "TRUE", "True":
-		return true, true
-	case "0", "false", "FALSE", "False":
-		return false, true
-	}
-
-	// Not a valid bool value
-	return
-}
 
 /******************************************************************************
 *                             Authentication                                  *
@@ -191,64 +125,6 @@ func scrambleOldPassword(scramble, password []byte) []byte {
 	}
 
 	return out[:]
-}
-
-/******************************************************************************
-*                           Time related utils                                *
-******************************************************************************/
-
-// NullTime represents a time.Time that may be NULL.
-// NullTime implements the Scanner interface so
-// it can be used as a scan destination:
-//
-//  var nt NullTime
-//  err := db.QueryRow("SELECT time FROM foo WHERE id=?", id).Scan(&nt)
-//  ...
-//  if nt.Valid {
-//     // use nt.Time
-//  } else {
-//     // NULL value
-//  }
-//
-// This NullTime implementation is not driver-specific
-type NullTime struct {
-	Time  time.Time
-	Valid bool // Valid is true if Time is not NULL
-}
-
-// Scan implements the Scanner interface.
-// The value type must be time.Time or string / []byte (formatted time-string),
-// otherwise Scan fails.
-func (nt *NullTime) Scan(value interface{}) (err error) {
-	if value == nil {
-		nt.Time, nt.Valid = time.Time{}, false
-		return
-	}
-
-	switch v := value.(type) {
-	case time.Time:
-		nt.Time, nt.Valid = v, true
-		return
-	case []byte:
-		nt.Time, err = parseDateTime(string(v), time.UTC)
-		nt.Valid = (err == nil)
-		return
-	case string:
-		nt.Time, err = parseDateTime(v, time.UTC)
-		nt.Valid = (err == nil)
-		return
-	}
-
-	nt.Valid = false
-	return fmt.Errorf("Can't convert %T to time.Time", value)
-}
-
-// Value implements the driver Valuer interface.
-func (nt NullTime) Value() (driver.Value, error) {
-	if !nt.Valid {
-		return nil, nil
-	}
-	return nt.Time, nil
 }
 
 func parseDateTime(str string, loc *time.Location) (t time.Time, err error) {
