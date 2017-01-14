@@ -190,6 +190,12 @@ func (mc *MysqlConn) writeAuthPacket(cipher []byte) error {
 
 	pktLen := 4 + 4 + 1 + 23 + len(mc.cfg.User) + 1 + 1 + len(scrambleBuff) + 21 + 1
 
+	// To specify a db name
+	if n := len(mc.cfg.DBName); n > 0 {
+		clientFlags |= clientConnectWithDB
+		pktLen += n + 1
+	}
+
 	// Calculate packet length and get buffer with that size
 	data := mc.buf.takeSmallBuffer(pktLen + 4)
 	if data == nil {
@@ -236,6 +242,13 @@ func (mc *MysqlConn) writeAuthPacket(cipher []byte) error {
 	// ScrambleBuffer [length encoded integer]
 	data[pos] = byte(len(scrambleBuff))
 	pos += 1 + copy(data[pos+1:], scrambleBuff)
+
+	// Databasename [null terminated string]
+	if len(mc.cfg.DBName) > 0 {
+		pos += copy(data[pos:], mc.cfg.DBName)
+		data[pos] = 0x00
+		pos++
+	}
 
 	// Assume native client during response
 	pos += copy(data[pos:], "mysql_native_password")
