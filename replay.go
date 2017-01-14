@@ -36,10 +36,10 @@ func worker_for_some_ip(key string, ch chan []byte) {
 	var packet []byte
 
 	mysqlConn, err := mysql.Open("tcp", username, password, host)
-	mysqlConn.Query("use ro_global_r1;", nil)
 	if err != nil {
-		log.Errorf("switch database err %v", err)
-	}
+                log.Errorf("switch database err %v", err)
+        }
+	mysqlConn.Query("use ro_global_r1;", nil)
 
 	log.Infof("a new connection")
 	for {
@@ -71,11 +71,11 @@ func worker_for_some_ip(key string, ch chan []byte) {
 				stmt_id = 0
 			}
 		}
-		//		if mysql_packet_get_cmd(packet) == COM_STMT_PREPARE {
+		if mysql_packet_get_cmd(packet) != mysql.COM_STMT_PREPARE {
+			continue
+		}
+
 		mysqlConn.NetConn.SetReadDeadline(time.Now().Add(time.Second))
-		//		} else {
-		//			conn.SetReadDeadline(time.Now())
-		//		}
 		buf := make([]byte, 65535)
 		n, err := mysqlConn.NetConn.Read(buf)
 		if err == io.EOF {
@@ -85,16 +85,11 @@ func worker_for_some_ip(key string, ch chan []byte) {
 			log.Warnf("read pack error %v", err)
 		} else {
 			buf = buf[:n]
-			if mysql_packet_get_cmd(packet) == mysql.COM_STMT_PREPARE {
-				// conn.SetReadDeadline(time.Now().Add(1 * time.Second))
-				if int(buf[4]) == 0 {
-					stmt_id = binary.LittleEndian.Uint32(buf[5:9])
-					log.Warnf("prepare reply, set stmt_id=%d", stmt_id)
-				} else {
-					log.Errorf("prepare stmt error. packet => %v", string(buf[13:]))
-				}
+			if int(buf[4]) == 0 {
+				stmt_id = binary.LittleEndian.Uint32(buf[5:9])
+				log.Warnf("prepare reply, set stmt_id=%d", stmt_id)
 			} else {
-				log.Warnf("reply packet len=%d", len(buf))
+				log.Errorf("prepare stmt error. packet => %s", string(buf[13:]))
 			}
 		}
 	}
