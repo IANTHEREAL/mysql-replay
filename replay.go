@@ -44,8 +44,7 @@ func init() {
 func worker_for_some_ip(key string, ch chan []byte, done chan int) {
 	var seq_id byte = 0
 	var stmt_id uint32 = 0
-	var packet []byte
-	var cmd byte = 0
+	var cmd byte
 
 	mysqlConn, err := mysql.Open(dsn)
 	if err != nil {
@@ -56,8 +55,8 @@ func worker_for_some_ip(key string, ch chan []byte, done chan int) {
 
 	for {
 		select {
-		case packet = <-ch:
-			if len(packet) == 0 {
+		case packet, ok := <-ch:
+			if !ok || len(packet) == 0 {
 				log.Infof("workder %s done", key)
 				done <- DONE
 				return
@@ -89,21 +88,15 @@ func worker_for_some_ip(key string, ch chan []byte, done chan int) {
 			if mysql_packet_get_cmd(packet) == mysql.COM_STMT_CLOSE {
 				stmt_id = 0
 			}
-		}
-		// if mysql_packet_get_cmd(packet) != mysql.COM_STMT_PREPARE {
-		// 	continue
-		// }
-
-		mysqlConn.NetConn.SetReadDeadline(time.Now().Add(time.Second))
-		buf := make([]byte, 65535)
-		n, err := mysqlConn.NetConn.Read(buf)
-		if err == io.EOF {
-			log.Warnf("packet => #v", packet)
-			log.Error("EOF while reading")
-		} else if err != nil {
-			log.Warnf("read pack error %v", err)
-		} else {
-			if cmd == mysql.COM_STMT_PREPARE {
+			mysqlConn.NetConn.SetReadDeadline(time.Now().Add(time.Second / 2))
+			buf := make([]byte, 65535)
+			n, err = mysqlConn.NetConn.Read(buf)
+			if err == io.EOF {
+				log.Warnf("packet => #v", packet)
+				log.Error("EOF while reading")
+			} else if err != nil {
+				log.Warnf("read pack error %v", err)
+			} else if cmd == mysql.COM_STMT_PREPARE {
 				buf = buf[:n]
 				if int(buf[4]) == 0 {
 					stmt_id = binary.LittleEndian.Uint32(buf[5:9])
@@ -145,17 +138,18 @@ func main() {
 
 	// wait goroutines to finish
 	for _, worker_ch := range workers {
-		worker_ch <- []byte{} // means done
+		close(worker_ch)
 	}
 
 	worker_num := len(workers)
-	log.Infof("worker number: %d", worker_num)
+	log.Infof("total worker number: %d", worker_num)
 	for {
 		select {
 		case <-done:
 			worker_num -= 1
+		case <-time.After(5 * time.Second):
+			log.Infof("waiting worker number: %d", worker_num)
 		}
-		log.Infof("worker number: %d", worker_num)
 		if worker_num == 0 {
 			break
 		}
@@ -230,7 +224,6 @@ func handlePacket(packet gopacket.Packet) {
 
 	switch cmd {
 	case mysql.COM_SLEEP, mysql.COM_QUIT, mysql.COM_PING, mysql.COM_FIELD_LIST, 133, 141:
-
 	default:
 		if ch, ok := workers[key]; ok {
 			ch <- data
