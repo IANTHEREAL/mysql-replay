@@ -2,16 +2,20 @@ package main
 
 import (
 	"encoding/binary"
+	"regexp"
+	"bytes"
 	"flag"
 	"fmt"
 	"io"
+	"sync"
+	"time"
+	"math/rand"
 
 	"github.com/GregoryIan/mysql-replay/mysql"
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/pcap"
 	"github.com/ngaut/log"
-	"time"
 )
 
 var (
@@ -25,12 +29,10 @@ var (
 	workers        map[string]chan []byte
 	reassemble_map map[string][]byte
 	dsn            string
-	done           chan int
+	deletes         chan string
 )
 
-const (
-	DONE int = 1
-)
+var wg sync.WaitGroup
 
 func init() {
 	flag.StringVar(&host, "host", "127.0.0.1", "host of target database")
@@ -41,24 +43,65 @@ func init() {
 	flag.StringVar(&sourcePcapFile, "pcap-file", "", "path of source pcap file")
 }
 
-func worker_for_some_ip(key string, ch chan []byte, done chan int) {
+func mysql_packet_extract_sql(raw_packet []byte) string {
+        sql := raw_packet[5:]
+        in_str := false
+        escape := false
+        for i, _ := range sql {
+                if sql[i] == '\'' && !escape {
+                        in_str = !in_str
+                } else if in_str && !escape && sql[i] == '\\' {
+                        escape = true
+                } else if in_str && escape {
+                        sql[i] = '\\'
+                        escape = false
+                } else if in_str && sql[i] != '\'' {
+                        sql[i] = 'M'
+                        escape = false
+                } else {
+                        escape = false
+                }
+        }
+
+        if true {
+                pattern := regexp.MustCompile("'.*?'")
+                ret := pattern.ReplaceAllFunc(sql, func(matches []byte) []byte {
+                        //log.Debug("size %d", len(matches))
+                        str_size := len(matches) - 2 - bytes.Count(matches, []byte("\\"))
+                        return []byte(fmt.Sprintf("'char(%d)'", str_size))
+                })
+                return string(ret)
+        }
+        //return "a sql"
+        return string(sql)
+}
+
+func worker_for_some_ip(key string, ch chan []byte) {
+	wg.Add(1)
+	defer func() {
+		deletes <- key
+		wg.Done()
+	}()
 	var seq_id byte = 0
 	var stmt_id uint32 = 0
 	var cmd byte
 
+Retry:
 	mysqlConn, err := mysql.Open(dsn)
 	if err != nil {
-		log.Errorf("switch database err %v", err)
+		log.Errorf("open database err %v", err)
+		num := time.Duration(rand.Int63n(1000))
+		time.Sleep(num*time.Millisecond)
+		goto Retry
 	}
+	defer mysqlConn.Close()
 
 	log.Infof("a new connection for %s", key)
-
 	for {
 		select {
 		case packet, ok := <-ch:
-			if !ok || len(packet) == 0 {
+			if !ok {
 				log.Infof("workder %s done", key)
-				done <- DONE
 				return
 			}
 
@@ -81,22 +124,18 @@ func worker_for_some_ip(key string, ch chan []byte, done chan int) {
 				n, err = mysqlConn.NetConn.Write(packet)
 			} else if err != nil {
 				log.Errorf("write packet error %v", err)
-			} else {
-
 			}
-			log.Infof("fake send %v: %v", key, n)
 			if mysql_packet_get_cmd(packet) == mysql.COM_STMT_CLOSE {
 				stmt_id = 0
 			}
-			mysqlConn.NetConn.SetReadDeadline(time.Now().Add(time.Second / 2))
+			mysqlConn.NetConn.SetReadDeadline(time.Now().Add(2*time.Second))
 			buf := make([]byte, 65535)
 			n, err = mysqlConn.NetConn.Read(buf)
-			if err == io.EOF {
-				log.Warnf("packet => #v", packet)
-				log.Error("EOF while reading")
-			} else if err != nil {
-				log.Warnf("read pack error %v", err)
-			} else if cmd == mysql.COM_STMT_PREPARE {
+			for  err != nil {
+                        	log.Errorf("unkown %s", err)
+				return
+			}
+			if cmd == mysql.COM_STMT_PREPARE {
 				buf = buf[:n]
 				if int(buf[4]) == 0 {
 					stmt_id = binary.LittleEndian.Uint32(buf[5:9])
@@ -111,6 +150,7 @@ func worker_for_some_ip(key string, ch chan []byte, done chan int) {
 
 func main() {
 	flag.Parse()
+	rand.Seed(time.Now().UnixNano())
 
 	dsn = fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8", username, password, host, port, dbname)
 
@@ -119,7 +159,7 @@ func main() {
 
 	workers = make(map[string]chan []byte)
 	reassemble_map = make(map[string][]byte)
-	done = make(chan int, 1024)
+	deletes = make(chan string, 256)
 
 	if err != nil {
 		panic(err)
@@ -141,20 +181,8 @@ func main() {
 		close(worker_ch)
 	}
 
-	worker_num := len(workers)
-	log.Infof("total worker number: %d", worker_num)
-	for {
-		select {
-		case <-done:
-			worker_num -= 1
-		case <-time.After(5 * time.Second):
-			log.Infof("waiting worker number: %d", worker_num)
-		}
-		if worker_num == 0 {
-			break
-		}
-	}
-
+	
+	wg.Wait()
 	log.Info("end play!")
 }
 
@@ -179,7 +207,11 @@ func mysql_packet_get_payload_length(raw_packet []byte) int {
 }
 
 func handlePacket(packet gopacket.Packet) {
-	// log.Info(packet)
+	select {
+	case key := <- deletes:
+		delete(workers, key)
+	default:
+	}
 	// Let's see if the packet is IP (even though the ether type told us)
 	ipLayer := packet.Layer(layers.LayerTypeIPv4)
 	if ipLayer == nil {
@@ -192,12 +224,22 @@ func handlePacket(packet gopacket.Packet) {
 		return
 	}
 	tcp, _ := tcpLayer.(*layers.TCP)
+	key := fmt.Sprintf("%v:%d->%v:%d", ip.SrcIP, tcp.SrcPort, ip.DstIP, tcp.DstPort)
+	if tcp.DstPort != 4000 {
+		key = fmt.Sprintf("%v:%d->%v:%d", ip.DstIP, tcp.DstPort, ip.SrcIP, tcp.SrcPort)
+	}
 
+	if tcp.FIN || tcp.RST {
+		delete(reassemble_map, key)
+		if ch, ok := workers[key]; ok {
+			close(ch)
+			delete(workers, key)
+		}
+		return
+	}
 	if len(tcp.Payload) == 0 || tcp.DstPort != 4000 {
 		return
 	}
-	// log.Infof("# %v:%d => %v:%d", ip.SrcIP, tcp.SrcPort, ip.DstIP, tcp.DstPort)
-	key := fmt.Sprintf("%v:%d->%v:%d", ip.SrcIP, tcp.SrcPort, ip.DstIP, tcp.DstPort)
 
 	data := tcp.Payload
 	if old_data, ok := reassemble_map[key]; ok {
@@ -214,10 +256,6 @@ func handlePacket(packet gopacket.Packet) {
 		reassemble_map[key] = data
 		log.Info("skip and wait for reassemble")
 		return
-	} else if payload_length < len(payload) {
-		log.Errorf("should have len %v, have %v", payload_length, len(payload))
-		log.Errorf("%v\n", data)
-		panic("are you sb?")
 	} else {
 		delete(reassemble_map, key)
 	}
@@ -229,7 +267,7 @@ func handlePacket(packet gopacket.Packet) {
 			ch <- data
 		} else {
 			new_ch := make(chan []byte, 102400)
-			go worker_for_some_ip(key, new_ch, done)
+			go worker_for_some_ip(key, new_ch)
 			workers[key] = new_ch
 			new_ch <- data
 		}
